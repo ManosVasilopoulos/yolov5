@@ -236,8 +236,8 @@ def test(data,
             json.dump(jdict, f)
 
         try:  # https://github.com/cocodataset/cocoapi/blob/master/PythonAPI/pycocoEvalDemo.ipynb
-            from pycocotools.coco import COCO
-            from pycocotools.cocoeval import COCOeval
+            from utils2.my_pycocotools.coco import COCO
+            from utils2.my_pycocotools.cocoeval import COCOeval
 
             anno = COCO(anno_json)  # init annotations api
             pred = anno.loadRes(pred_json)  # init predictions api
