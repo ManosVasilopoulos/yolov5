@@ -29,8 +29,10 @@ matplotlib.use('Agg')  # for writing to files only
 def color_list():
     # Return first 10 plt colors as (r,g,b) https://stackoverflow.com/questions/51350872/python-from-color-name-to-rgb
     def hex2rgb(h):
-        return tuple(int(h[1 + i:1 + i + 2], 16) for i in (0, 2, 4))
-
+        if type(h) == str:
+            return tuple(int(h[1 + i:1 + i + 2], 16) for i in (0, 2, 4))
+        else:
+            return (14, 14, 14)
     return [hex2rgb(h) for h in plt.rcParams['axes.prop_cycle'].by_key()['color']]
 
 
@@ -253,7 +255,7 @@ def plot_study_txt(path='', x=None):  # from utils.plots import *; plot_study_tx
     plt.savefig('test_study.png', dpi=300)
 
 
-def plot_labels(labels, save_dir=Path(''), loggers=None):
+def plot_labels(labels, save_dir=Path('')):
     # plot dataset labels
     print('Plotting labels... ')
     c, b = labels[:, 0], labels[:, 1:].transpose()  # classes, boxes
@@ -290,11 +292,6 @@ def plot_labels(labels, save_dir=Path(''), loggers=None):
     plt.savefig(save_dir / 'labels.jpg', dpi=200)
     matplotlib.use('Agg')
     plt.close()
-
-    # loggers
-    for k, v in loggers.items() or {}:
-        if k == 'wandb' and v:
-            v.log({"Labels": [v.Image(str(x), caption=x.name) for x in save_dir.glob('*labels*.jpg')]})
 
 
 def plot_evolution(yaml_file='data/hyp.finetune.yaml'):  # from utils.plots import *; plot_evolution()

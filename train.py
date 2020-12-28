@@ -22,7 +22,6 @@ from torch.utils.tensorboard import SummaryWriter
 from tqdm import tqdm
 
 import test  # import test.py to get mAP after each epoch
-from models.experimental import attempt_load
 from models.yolo import Model
 from utils.autoanchor import check_anchors
 from utils.datasets import create_dataloader
@@ -36,14 +35,7 @@ from utils.torch_utils import ModelEMA, select_device, intersect_dicts, torch_di
 
 logger = logging.getLogger(__name__)
 
-try:
-    import wandb
-except ImportError:
-    wandb = None
-    logger.info("Install Weights & Biases for experiment logging via 'pip install wandb' (recommended)")
-
-
-def train(hyp, opt, device, tb_writer=None, wandb=None):
+def train(hyp, opt, device, tb_writer=None):
     logger.info(f'Hyperparameters {hyp}')
     save_dir, epochs, batch_size, total_batch_size, weights, rank = \
         Path(opt.save_dir), opt.epochs, opt.batch_size, opt.total_batch_size, opt.weights, opt.global_rank
@@ -130,15 +122,6 @@ def train(hyp, opt, device, tb_writer=None, wandb=None):
     scheduler = lr_scheduler.LambdaLR(optimizer, lr_lambda=lf)
     # plot_lr_scheduler(optimizer, scheduler, epochs)
 
-    # Logging
-    if wandb and wandb.run is None:
-        opt.hyp = hyp  # add hyperparameters
-        wandb_run = wandb.init(config=opt, resume="allow",
-                               project='YOLOv5' if opt.project == 'runs/train' else Path(opt.project).stem,
-                               name=save_dir.stem,
-                               id=ckpt.get('wandb_id') if 'ckpt' in locals() else None)
-    loggers = {'wandb': wandb}  # loggers dict
-
     # Resume
     start_epoch, best_fitness = 0, 0.0
     if pretrained:
@@ -205,7 +188,7 @@ def train(hyp, opt, device, tb_writer=None, wandb=None):
             # cf = torch.bincount(c.long(), minlength=nc) + 1.  # frequency
             # model._initialize_biases(cf.to(device))
             if plots:
-                plot_labels(labels, save_dir, loggers)
+                plot_labels(labels, save_dir)
                 if tb_writer:
                     tb_writer.add_histogram('classes', c, 0)
 
@@ -317,8 +300,10 @@ def train(hyp, opt, device, tb_writer=None, wandb=None):
                     # if tb_writer:
                     #     tb_writer.add_image(f, result, dataformats='HWC', global_step=epoch)
                     #     tb_writer.add_graph(model, imgs)  # add model to tensorboard
-                elif plots and ni == 3 and wandb:
-                    wandb.log({"Mosaics": [wandb.Image(str(x), caption=x.name) for x in save_dir.glob('train*.jpg')]})
+                elif plots and ni == 3:
+                    # TODO --> Log locally (find out how)
+                    pass
+                    # wandb.log({"Mosaics": [wandb.Image(str(x), caption=x.name) for x in save_dir.glob('train*.jpg')]})
 
             # end batch ------------------------------------------------------------------------------------------------
         # end epoch ----------------------------------------------------------------------------------------------------
@@ -342,7 +327,7 @@ def train(hyp, opt, device, tb_writer=None, wandb=None):
                                                  dataloader=testloader,
                                                  save_dir=save_dir,
                                                  plots=plots and final_epoch,
-                                                 log_imgs=opt.log_imgs if wandb else 0)
+                                                 log_imgs=0)
 
             # Write
             with open(results_file, 'a') as f:
@@ -358,8 +343,6 @@ def train(hyp, opt, device, tb_writer=None, wandb=None):
             for x, tag in zip(list(mloss[:-1]) + list(results) + lr, tags):
                 if tb_writer:
                     tb_writer.add_scalar(tag, x, epoch)  # tensorboard
-                if wandb:
-                    wandb.log({tag: x})  # W&B
 
             # Update best mAP
             fi = fitness(np.array(results).reshape(1, -1))  # weighted combination of [P, R, mAP@.5, mAP@.5-.95]
@@ -375,10 +358,14 @@ def train(hyp, opt, device, tb_writer=None, wandb=None):
                             'training_results': f.read(),
                             'model': ema.ema,
                             'optimizer': None if final_epoch else optimizer.state_dict(),
-                            'wandb_id': wandb_run.id if wandb else None}
+                            'wandb_id': None}
 
                 # Save last, best and delete
                 torch.save(ckpt, last)
+                # Save a separate file for every epoch
+                epoch_weights_path = wdir / ('epoch_' + str(epoch + 1) + '.pt')
+                torch.save(ckpt, epoch_weights_path)
+
                 if best_fitness == fi:
                     torch.save(ckpt, best)
                 del ckpt
@@ -391,39 +378,14 @@ def train(hyp, opt, device, tb_writer=None, wandb=None):
         for f in [last, best]:
             if f.exists():
                 strip_optimizer(f)  # strip optimizers
-        if opt.bucket:
-            os.system(f'gsutil cp {final} gs://{opt.bucket}/weights')  # upload
-
         # Plots
         if plots:
             plot_results(save_dir=save_dir)  # save as results.png
-            if wandb:
-                files = ['results.png', 'precision_recall_curve.png', 'confusion_matrix.png']
-                wandb.log({"Results": [wandb.Image(str(save_dir / f), caption=f) for f in files
-                                       if (save_dir / f).exists()]})
-                if opt.log_artifacts:
-                    wandb.log_artifact(artifact_or_path=str(final), type='model', name=save_dir.stem)
-
         # Test best.pt
         logger.info('%g epochs completed in %.3f hours.\n' % (epoch - start_epoch + 1, (time.time() - t0) / 3600))
-        if opt.data.endswith('coco.yaml') and nc == 80:  # if COCO
-            for conf, iou, save_json in ([0.25, 0.45, False], [0.001, 0.65, True]):  # speed, mAP tests
-                results, _, _ = test.test(opt.data,
-                                          batch_size=total_batch_size,
-                                          imgsz=imgsz_test,
-                                          conf_thres=conf,
-                                          iou_thres=iou,
-                                          model=attempt_load(final, device).half(),
-                                          single_cls=opt.single_cls,
-                                          dataloader=testloader,
-                                          save_dir=save_dir,
-                                          save_json=save_json,
-                                          plots=False)
-
     else:
         dist.destroy_process_group()
 
-    wandb.run.finish() if wandb and wandb.run else None
     torch.cuda.empty_cache()
     return results
 
@@ -460,6 +422,7 @@ if __name__ == '__main__':
     parser.add_argument('--exist-ok', action='store_true', help='existing project/name ok, do not increment')
     opt = parser.parse_args()
 
+    """ Differential Dynamic Programming (DDP) """
     # Set DDP variables
     opt.total_batch_size = opt.batch_size
     opt.world_size = int(os.environ['WORLD_SIZE']) if 'WORLD_SIZE' in os.environ else 1
@@ -509,7 +472,7 @@ if __name__ == '__main__':
         if opt.global_rank in [-1, 0]:
             logger.info(f'Start Tensorboard with "tensorboard --logdir {opt.project}", view at http://localhost:6006/')
             tb_writer = SummaryWriter(opt.save_dir)  # Tensorboard
-        train(hyp, opt, device, tb_writer, wandb)
+        train(hyp, opt, device, tb_writer)
 
     # Evolve hyperparameters (optional)
     else:
@@ -583,7 +546,7 @@ if __name__ == '__main__':
                 hyp[k] = round(hyp[k], 5)  # significant digits
 
             # Train mutation
-            results = train(hyp.copy(), opt, device, wandb=wandb)
+            results = train(hyp.copy(), opt, device)
 
             # Write mutation results
             print_mutation(hyp.copy(), results, yaml_file, opt.bucket)

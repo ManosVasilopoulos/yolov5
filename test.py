@@ -76,10 +76,7 @@ def test(data,
 
     # Logging
     log_imgs, wandb = min(log_imgs, 100), None  # ceil
-    try:
-        import wandb  # Weights & Biases
-    except ImportError:
-        log_imgs = 0
+    log_imgs = 0
 
     # Dataloader
     if not training:
@@ -145,16 +142,6 @@ def test(data,
                     line = (cls, *xywh, conf) if save_conf else (cls, *xywh)  # label format
                     with open(save_dir / 'labels' / (path.stem + '.txt'), 'a') as f:
                         f.write(('%g ' * len(line)).rstrip() % line + '\n')
-
-            # W&B logging
-            if plots and len(wandb_images) < log_imgs:
-                box_data = [{"position": {"minX": xyxy[0], "minY": xyxy[1], "maxX": xyxy[2], "maxY": xyxy[3]},
-                             "class_id": int(cls),
-                             "box_caption": "%s %.3f" % (names[cls], conf),
-                             "scores": {"class_score": conf},
-                             "domain": "pixel"} for *xyxy, conf, cls in pred.tolist()]
-                boxes = {"predictions": {"box_data": box_data, "class_labels": names}}  # inference-space
-                wandb_images.append(wandb.Image(img[si], boxes=boxes, caption=path.name))
 
             # Append to pycocotools JSON dictionary
             if save_json:
@@ -238,9 +225,6 @@ def test(data,
     # Plots
     if plots:
         confusion_matrix.plot(save_dir=save_dir, names=list(names.values()))
-        if wandb and wandb.run:
-            wandb.log({"Images": wandb_images})
-            wandb.log({"Validation": [wandb.Image(str(f), caption=f.name) for f in sorted(save_dir.glob('test*.jpg'))]})
 
     # Save JSON
     if save_json and len(jdict):
